@@ -1,0 +1,13 @@
+{
+  "name": "grace-interpret-church-app",
+  "version": "1.0.0",
+  "description": "プロテスタント教会礼拝・説教向け 日本語→英語リアルタイム同時通訳Webアプリ（教会用語集連動・プロジェクター字幕対応）",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "dev": "python3 -m http.server 8080"
+  },
+  "dependencies": {
+    "@google/genai": "^2.3.0"
+  }
+}

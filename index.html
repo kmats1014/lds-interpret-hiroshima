@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LDS Interpret — 教会礼拝・説教 リアルタイム同時通訳システム</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="./mqtt.min.js"></script>
+  <script src="./qr-generator.js"></script>
+  <script type="importmap">
+    {
+      "imports": {
+        "@google/genai": "https://esm.sh/@google/genai@2.3.0"
+      }
+    }
+  </script>
+</head>
+<body data-theme="light" data-view-mode="split">
+  <!-- トップヘッダー（プロジェクター全画面モード時は自動的に控えめ表示） -->
+  <header class="app-header">
+    <div class="brand-area">
+      <div>
+        <div class="brand-title-row">
+          <h1 class="brand-title">LDS Interpret</h1>
+        </div>
+      </div>
+    </div>
+
+    <!-- 礼拝シーン切替 & 表示モード切替 -->
+    <div class="header-controls">
+      <div class="control-group building-room-group" aria-label="建物・部屋の選択">
+        <label for="buildingSelect" class="control-label">🏢 建物</label>
+        <select id="buildingSelect" class="select-input" title="配信を行う教会（建物）を選択します"></select>
+        <label for="roomSelect" class="control-label">🚪 部屋</label>
+        <select id="roomSelect" class="select-input" title="配信を行う部屋を選択します"></select>
+        <span id="roomConflictBadge" class="room-conflict-badge" hidden title="同じ建物・部屋で別のPCがすでに配信中です">
+          ⚠️ 別PCが配信中
+        </span>
+      </div>
+
+      <div class="control-group">
+        <label for="sceneModeSelect" class="control-label">礼拝シーン</label>
+        <select id="sceneModeSelect" class="select-input" title="礼拝の場面に応じた英語の文体・トーンを自動調整します">
+          <option value="sermon">説教・メッセージ (Sermon)</option>
+          <option value="prayer">祈祷・祝祷 (Prayer)</option>
+          <option value="worship">礼拝司会・式次第 (Liturgy)</option>
+          <option value="announcement">報告・交わり案内 (Notice)</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label for="viewModeSelect" class="control-label">画面レイアウト</label>
+        <select id="viewModeSelect" class="select-input" title="プロジェクター投影用やオペレーター用の表示を切り替えます">
+          <option value="split">日英全文 ＋ 用語集パネル (標準)</option>
+          <option value="bilingual">日英全文 ワイド表示 (辞書を隠す)</option>
+          <option value="english-only">英語字幕のみ特大 (投影用)</option>
+        </select>
+      </div>
+
+      <div class="control-group font-scale-group">
+        <label for="fontScaleRange" class="control-label">文字サイズ</label>
+        <input type="range" id="fontScaleRange" min="0.85" max="1.9" step="0.05" value="1.15" />
+      </div>
+
+      <button type="button" id="projectorBtn" class="btn btn-secondary" title="プロジェクター・大型モニター向けに全画面字幕表示に切り替えます (ショートカット: Alt+P)">
+        <span class="icon">⛶</span> プロジェクター表示
+      </button>
+
+      <div class="settings-dropdown-wrapper" id="settingsDropdownWrapper">
+        <button type="button" id="openSettingsMenuBtn" class="btn btn-outline" aria-haspopup="true" aria-expanded="false" title="各種設定（テキスト出力・学習・API設定）を開きます">
+          <span class="icon">⚙️</span> 各種設定 <span class="arrow-down">▾</span>
+          <span id="apiStatusDot" class="status-dot status-demo" title="デモモード動作中（APIキー未設定）"></span>
+        </button>
+        <div id="settingsDropdownMenu" class="settings-dropdown-menu" hidden>
+          <button type="button" id="menuExportTxtBtn" class="settings-menu-item">
+            <span class="menu-item-icon">📥</span>
+            <div class="menu-item-text">
+              <span class="menu-item-title">テキスト出力 (.txt)</span>
+              <span class="menu-item-desc">通訳の全履歴ログをダウンロード</span>
+            </div>
+          </button>
+          <button type="button" id="menuFeedbackBtn" class="settings-menu-item">
+            <span class="menu-item-icon">🧠</span>
+            <div class="menu-item-text">
+              <span class="menu-item-title">結果の修正・フィードバック学習</span>
+              <span class="menu-item-desc">訳文の手直し・AIルール学習</span>
+            </div>
+            <span class="badge-count" id="activeFeedbackCount">0</span>
+          </button>
+          <button type="button" id="menuGlossaryBtn" class="settings-menu-item">
+            <span class="menu-item-icon">📖</span>
+            <div class="menu-item-text">
+              <span class="menu-item-title">教会用語集（辞書）</span>
+              <span class="menu-item-desc">用語の検索・追加・インポート管理</span>
+            </div>
+            <span class="badge-count" id="menuGlossaryCount">0</span>
+          </button>
+          <div class="settings-menu-divider"></div>
+          <button type="button" id="menuApiSettingsBtn" class="settings-menu-item">
+            <span class="menu-item-icon">⚙️</span>
+            <div class="menu-item-text">
+              <span class="menu-item-title">API設定</span>
+              <span class="menu-item-desc">Gemini APIキー・モデル・教会設定</span>
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- メインワークスペース -->
+  <main class="workspace">
+    <!-- 左/メインパネル: リアルタイム同時通訳スクリーン & マイク操作 -->
+    <section class="interpreter-panel" aria-label="同時通訳ライブ画面">
+      <!-- マイク・音声制御バー -->
+      <div class="audio-control-bar">
+        <div class="mic-primary-group">
+          <div class="control-group lang-pair-group" aria-label="通訳言語の選択">
+            <label for="sourceLangSelect" class="control-label">話す言語</label>
+            <select id="sourceLangSelect" class="select-input select-lang" title="スピーカーが話す言語（音声認識の言語）を選択します">
+              <option value="ja">🇯🇵 日本語</option>
+              <option value="en">🇺🇸 英語 (English)</option>
+              <option value="tl">🇵🇭 タガログ語</option>
+              <option value="id">🇮🇩 インドネシア語</option>
+            </select>
+
+            <span class="lang-arrow" aria-hidden="true">➔</span>
+
+            <span class="control-label">通訳先 <span class="badge-count" id="targetCountBadge" title="最大3言語まで同時に通訳できます">1/3</span></span>
+            <div class="target-lang-chips" id="targetLangChips" role="group" aria-label="通訳先言語（最大3つ選択）">
+              <!-- JSで動的生成 -->
+            </div>
+          </div>
+
+          <button type="button" id="micToggleBtn" class="btn-mic" aria-pressed="false">
+            <span id="micBtnText">同時通訳スタート</span>
+          </button>
+
+          <button type="button" id="pauseMicBtn" class="btn btn-compact btn-outline" disabled title="音声認識・翻訳を一時停止します">
+            ⏸ 一時停止
+          </button>
+        </div>
+
+        <div class="audio-secondary-actions">
+          <div class="live-status-indicator" id="liveStatusBadge">
+            <span class="pulse-dot"></span>
+            <span id="liveStatusText">待機中</span>
+          </div>
+
+          <label class="toggle-pill" title="通訳された文章を自動で音声読み上げします">
+            <input type="checkbox" id="ttsToggleCheckbox" />
+            <span id="ttsToggleLabelText">英語読み上げ</span>
+          </label>
+
+          <label class="toggle-pill" title="適用された教会用語を字幕内でハイライト表示します">
+            <input type="checkbox" id="highlightTermsCheckbox" checked />
+            <span>用語ハイライト</span>
+          </label>
+
+          <button type="button" id="copyAllLogBtn" class="btn btn-compact" title="スタートから終了までの通訳全文をクリップボードにコピーします">
+            全文コピー
+          </button>
+          <button type="button" id="exportLogBtn" class="btn btn-compact btn-primary" title="スタートから終了までの通訳結果をテキストファイル(.txt)として出力します">
+            テキスト出力 (.txt)
+          </button>
+          <button type="button" id="clearLogBtn" class="btn btn-compact btn-danger-outline" title="これまでの音声認識・入力・通訳内容をすべてクリアします">
+            入力・通訳内容をクリア
+          </button>
+          <button type="button" id="toggleCompactModeBtn" class="btn btn-compact btn-toggle-compact" title="操作メニューを最小化し、通訳画面を縦いっぱいに広げます">
+            <span id="compactBtnText">最小化</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 通訳終了時に表示されるワンクリック出力＆フィードバック案内バー -->
+      <div id="postSessionActionBanner" class="post-session-banner" hidden>
+        <div class="post-session-banner-text">
+          <strong>📄 通訳結果の出力・学習：</strong>
+          <span>スタートから終了までの内容をテキスト出力したり、修正・フィードバックを今後の通訳に活かせます。</span>
+        </div>
+        <div class="post-session-banner-actions">
+          <button type="button" id="bannerExportTxtBtn" class="btn btn-compact btn-primary">
+            📥 テキストファイル(.txt)で出力
+          </button>
+          <button type="button" id="bannerOpenFeedbackBtn" class="btn btn-compact btn-secondary">
+            📝 通訳結果の修正・フィードバックを入力
+          </button>
+          <button type="button" id="dismissBannerBtn" class="btn btn-compact btn-ghost" aria-label="案内を閉じる">
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <!-- メインの連続ライブ通訳ステージ（書き起こし1枠・英語通訳1枠に一連の文章としてリアルタイム追記） -->
+      <div class="live-stage" id="liveStage" data-box-layout="horizontal">
+        <div class="live-stage-header">
+          <div class="stage-header-left">
+            <span class="stage-tag">LIVE CONTINUOUS STREAM</span>
+            <span class="history-count-badge" id="historyCountLabel">0 文字</span>
+            <div class="stage-layout-actions">
+              <div class="stream-layout-tabs" id="streamLayoutTabs" role="group" aria-label="2つの枠の配置切替">
+                <button type="button" class="layout-tab active" data-layout="horizontal" title="左に書き起こし枠、右に通訳枠を並べて表示します">
+                  左右2枠（書き起こし ｜ 通訳）
+                </button>
+                <button type="button" class="layout-tab" data-layout="vertical" title="上に英語通訳枠、下に日本語書き起こし枠を並べて表示します">
+                  上下2枠（上：通訳 ／ 下：書き起こし）
+                </button>
+              </div>
+              <button type="button" id="insertParagraphBtn" class="btn btn-compact btn-outline" title="書き起こしと通訳の文章に段落の改行を入れます">
+                ↵ 段落改行
+              </button>
+            </div>
+          </div>
+          <div class="stage-header-right">
+            <button type="button" id="openShareModalBtn" class="btn btn-compact btn-secondary btn-share-live" title="参加者がスマホで自分の言語のリアルタイム字幕を読める閲覧URLとQRコードを発行します">
+              <span class="icon">📱</span> 参加者URL・QR発行
+              <span class="share-live-dot" id="shareLiveDot" title="配信準備完了"></span>
+            </button>
+            <button type="button" id="exitProjectorBtn" class="btn btn-compact exit-projector-only">
+              ✕ 通常画面に戻る (Esc)
+            </button>
+          </div>
+        </div>
+
+        <!-- 書き起こし1枠 ＆ 通訳1枠 の2ボックスコンテナ -->
+        <div class="two-boxes-workspace" id="twoBoxesWorkspace">
+          <!-- 枠1: 音声認識 書き起こしボックス（1つの枠に一連の文章としてリアルタイム表示） -->
+          <section class="single-stream-box box-ja" id="jaSingleBox" aria-label="音声認識の書き起こし枠">
+            <div class="stream-box-header">
+              <div class="box-title-wrap">
+                <span class="box-flag" id="sourceBoxFlag">🇯🇵</span>
+                <h3 class="box-title" id="sourceBoxTitle">音声認識 書き起こし（日本語）</h3>
+              </div>
+              <button type="button" id="copyJaOnlyBtn" class="btn btn-compact btn-ghost" title="書き起こした全文をコピーします">
+                📋 書き起こしコピー
+              </button>
+            </div>
+
+            <div class="single-box-scroll" id="jaScrollContainer">
+              <div class="continuous-prose prose-ja" id="jaContinuousProse">
+                <span id="jaPlaceholderText" class="prose-placeholder">
+                  マイクをONにして話し始めると、ここにリアルタイムで音声認識と書き起こしが表示されます...
+                </span>
+                <span id="jaCommittedContainer"></span>
+                <span id="jaLiveInterimSpan" class="ja-live-interim"></span>
+              </div>
+            </div>
+          </section>
+
+          <!-- ドラッグ＆ドロップで日本語枠・英語枠のサイズ比率を変更できるスプリッター -->
+          <div
+            class="box-splitter"
+            id="boxSplitter"
+            role="separator"
+            aria-label="日本語枠と英語枠のサイズ調整バー"
+            title="ドラッグして枠のサイズを変更できます（ダブルクリックで均等サイズにリセット）"
+          >
+            <span class="splitter-grip" aria-hidden="true"></span>
+          </div>
+
+          <!-- 枠2: 同時通訳ボックス（1つの枠に一連の文章としてリアルタイム表示） -->
+          <section class="single-stream-box box-en" id="enSingleBox" aria-label="同時通訳枠">
+            <div class="stream-box-header">
+              <div class="box-title-wrap">
+                <span class="box-flag" id="targetBoxFlag">🇺🇸</span>
+                <h3 class="box-title" id="targetBoxTitle">同時通訳</h3>
+                <div class="target-lang-tabs" id="targetLangTabs" role="tablist" aria-label="通訳言語タブ"></div>
+              </div>
+              <div class="box-header-actions">
+                <div class="matched-terms-strip" id="latestMatchedTermsStrip"></div>
+                <button type="button" id="copyEnOnlyBtn" class="btn btn-compact btn-ghost" title="通訳の全文をコピーします">
+                  📋 通訳コピー
+                </button>
+              </div>
+            </div>
+
+            <div class="single-box-scroll" id="enScrollContainer" aria-live="polite" aria-atomic="false">
+              <div class="continuous-prose prose-en" id="enContinuousProse">
+                <span id="enPlaceholderText" class="prose-placeholder">
+                  「同時通訳を開始」を押すと、選択した言語の通訳がリアルタイムに表示されます...
+                </span>
+                <div class="multi-target-streams" id="multiTargetStreams"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- 過去の文章へスクロール中に表示される「最新へ戻る」フローティングボタン -->
+        <button type="button" id="scrollToLatestBtn" class="btn-scroll-latest" hidden>
+          ⬇ 最新の文章位置へ戻る（自動追従を再開）
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <!-- モーダル0: 教会用語集（辞書）管理ダイアログ (Modern Web Guidance 準拠: native <dialog closedby="any">) -->
+  <dialog id="glossaryDialog" class="dialog-wide glossary-dialog" closedby="any" aria-labelledby="glossaryDialogTitle">
+    <div class="dialog-card glossary-dialog-card">
+      <div class="dialog-header">
+        <div>
+          <h2 id="glossaryDialogTitle">📖 教会用語集（辞書） <span class="badge-count" id="activeGlossaryCount">0</span></h2>
+          <p class="sidebar-desc" style="margin-top: 0.25rem;">ONの用語に沿ってAIが通訳・音声認識補正を行います</p>
+        </div>
+        <button type="button" id="closeGlossaryDialogBtn" class="btn-icon-close" aria-label="閉じる">✕</button>
+      </div>
+
+      <div class="glossary-dialog-actions">
+        <button type="button" id="openSermonExtractBtn" class="btn btn-secondary btn-compact" title="説教の日本語・英語原稿から用語候補を自動リストアップします">
+          📄 原稿から抽出
+        </button>
+        <button type="button" id="addTermQuickBtn" class="btn btn-primary btn-compact">
+          ＋ 用語追加
+        </button>
+      </div>
+
+      <!-- 検索・カテゴリ絞り込み -->
+      <div class="glossary-filter-bar">
+        <input
+          type="search"
+          id="glossarySearchInput"
+          class="text-input input-sm"
+          placeholder="用語を検索（例：贖い、聖餐、Pastor...）"
+          aria-label="教会用語を検索"
+          autofocus
+        />
+        <div class="category-chips" id="categoryFilterChips" role="group" aria-label="カテゴリ絞り込み">
+          <button type="button" class="chip active" data-cat="all">すべて</button>
+          <button type="button" class="chip" data-cat="worship">礼拝・式次第</button>
+          <button type="button" class="chip" data-cat="theology">神学・信仰</button>
+          <button type="button" class="chip" data-cat="roles">教職・組織</button>
+          <button type="button" class="chip" data-cat="life">祈り・生活</button>
+          <button type="button" class="chip" data-cat="scripture">聖書</button>
+          <button type="button" class="chip" data-cat="custom">独自登録</button>
+        </div>
+      </div>
+
+      <!-- 用語リスト -->
+      <div class="glossary-list glossary-dialog-list" id="glossaryListContainer"></div>
+
+      <!-- 辞書インポート / エクスポート / リセット / GitHubバックアップ -->
+      <div class="sidebar-footer glossary-dialog-footer">
+        <div style="display: flex; gap: 0.4rem;">
+          <button type="button" id="backupGlossaryGithubBtn" class="btn btn-compact btn-secondary" style="flex: 1;" title="現在の用語集をGitHubリポジトリ（glossary-backup.json）に保存します">
+            ☁️ GitHub保存
+          </button>
+          <button type="button" id="restoreGlossaryGithubBtn" class="btn btn-compact btn-outline" style="flex: 1;" title="GitHubリポジトリ上のバックアップから用語集を復元します">
+            ☁️ GitHub復元
+          </button>
+        </div>
+        <div style="display: flex; gap: 0.4rem; align-items: center; justify-content: space-between;">
+          <button type="button" id="exportGlossaryCsvBtn" class="btn btn-compact btn-outline" style="flex: 1;" title="用語集をCSV形式で書き出します（Excel等で編集可能）">
+            CSV出力
+          </button>
+          <label class="btn btn-compact btn-outline file-upload-label" style="flex: 1;" title="CSVまたはJSONファイルから用語集を一括読み込みします">
+            CSV読込
+            <input type="file" id="importGlossaryFileInput" accept=".csv,.json" hidden />
+          </label>
+          <button type="button" id="resetGlossaryBtn" class="btn btn-compact btn-ghost" title="初期のプロテスタント教会用語集に戻します">
+            初期値に戻す
+          </button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- モーダル1: 教会用語の追加・編集ダイアログ (Modern Web Guidance 準拠: native <dialog closedby="any">) -->
+  <dialog id="termDialog" closedby="any" aria-labelledby="termDialogTitle">
+    <form id="termForm" method="dialog" class="dialog-card">
+      <div class="dialog-header">
+        <h2 id="termDialogTitle">教会用語の登録・編集</h2>
+        <button type="button" class="btn-icon-close" id="closeTermDialogBtn" aria-label="閉じる">✕</button>
+      </div>
+
+      <div class="dialog-body">
+        <input type="hidden" id="termIdInput" />
+
+        <div class="form-field">
+          <label for="termJaInput">日本語の教会用語 <span class="req">*</span></label>
+          <input
+            type="text"
+            id="termJaInput"
+            class="text-input"
+            placeholder="例：聖餐式、贖い、〇〇教会、〇〇牧師"
+            required
+            autofocus
+          />
+        </div>
+
+        <div class="form-field">
+          <label for="termEnInput">指定する英語訳 <span class="req">*</span></label>
+          <input
+            type="text"
+            id="termEnInput"
+            class="text-input"
+            placeholder="例：Holy Communion / redemption / Grace Community Church"
+            required
+          />
+          <small class="field-hint">この日本語が登場した際、必ずこの英語表現を使って通訳します。</small>
+        </div>
+
+        <div class="form-row-2col">
+          <div class="form-field">
+            <label for="termCategorySelect">カテゴリ</label>
+            <select id="termCategorySelect" class="select-input">
+              <option value="custom">教会独自・固有名詞</option>
+              <option value="worship">礼拝・式次第</option>
+              <option value="theology">神学・教理・信仰</option>
+              <option value="roles">教職・教会組織</option>
+              <option value="life">祈り・信仰生活</option>
+              <option value="scripture">聖書・頻出表現</option>
+            </select>
+          </div>
+
+          <div class="form-field">
+            <label for="termReadingInput">よみがな（任意）</label>
+            <input
+              type="text"
+              id="termReadingInput"
+              class="text-input"
+              placeholder="例：せいさんしき"
+            />
+          </div>
+        </div>
+
+        <div class="form-field">
+          <label for="termVariantsInput">音声認識の誤変換補正ワード（カンマ区切り・任意）</label>
+          <input
+            type="text"
+            id="termVariantsInput"
+            class="text-input"
+            placeholder="例：生産式, 清算式（マイクが誤変換しやすい同音異義語）"
+          />
+          <small class="field-hint">マイクが同音異義語として誤認識した際、自動的に上記の正しい教会用語へ置き換えます。</small>
+        </div>
+
+        <div class="form-field">
+          <label for="termNoteInput">文脈・ニュアンス補足メモ（AIへの指示・任意）</label>
+          <input
+            type="text"
+            id="termNoteInput"
+            class="text-input"
+            placeholder="例：礼拝終盤の祝福の祈り / 固有名詞としてそのまま使用"
+          />
+        </div>
+      </div>
+
+      <div class="dialog-footer">
+        <button type="button" id="cancelTermDialogBtn" class="btn btn-ghost">キャンセル</button>
+        <button type="submit" id="saveTermBtn" value="save" class="btn btn-primary">用語を保存する</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- モーダル2: Gemini API・通訳エンジン設定ダイアログ -->
+  <dialog id="settingsDialog" closedby="any" aria-labelledby="settingsDialogTitle">
+    <form id="settingsForm" method="dialog" class="dialog-card">
+      <div class="dialog-header">
+        <h2 id="settingsDialogTitle">⚙ Gemini API・同時通訳環境設定</h2>
+        <button type="button" class="btn-icon-close" id="closeSettingsDialogBtn" aria-label="閉じる">✕</button>
+      </div>
+
+      <div class="dialog-body">
+        <div class="info-banner">
+          <strong>💡 ご案内：</strong>
+          Google AI Studio で取得した <strong>Gemini APIキー</strong> を設定すると、文脈と教会用語集を深く理解した高精度なAI同時通訳が有効になります（ブラウザのローカルにのみ保存され、外部サーバーへは送信されません）。
+        </div>
+
+        <div class="form-field">
+          <label for="apiKeyInput">Gemini API キー</label>
+          <div class="password-input-wrap">
+            <input
+              type="password"
+              id="apiKeyInput"
+              class="text-input"
+              placeholder="AIzaSy..."
+              autocomplete="off"
+              autofocus
+            />
+            <button type="button" id="toggleApiKeyVisibilityBtn" class="btn btn-compact btn-outline">
+              表示
+            </button>
+            <button type="button" id="testApiConnectionBtn" class="btn btn-compact btn-secondary">
+              🔌 接続テスト
+            </button>
+          </div>
+          <div id="apiTestResultBox" class="field-hint" style="margin-top: 0.25rem;"></div>
+          <small class="field-hint">
+            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio (aistudio.google.com/apikey)</a> から無料で発行できます。未入力の場合は用語集デモモードで動作します。
+          </small>
+        </div>
+
+        <div class="form-field">
+          <label for="geminiModelSelect">使用する Gemini モデル（翻訳）</label>
+          <select id="geminiModelSelect" class="select-input">
+            <option value="gemini-3.5-flash-lite">⚡ Gemini 3.5 Flash-Lite（最速・同時通訳に推奨）</option>
+            <option value="gemini-3.8-flash">✨ Gemini 3.8 Flash（高精度・標準）</option>
+            <option value="gemini-3.1-flash-lite">🚀 Gemini 3.1 Flash-Lite（超軽量・高速）</option>
+          </select>
+        </div>
+
+        <div class="form-field">
+          <label for="ttsModelSelect">参加者向け AI 音声モデル（TTS）</label>
+          <select id="ttsModelSelect" class="select-input">
+            <option value="gemini-3.8-flash-lite-tts">⚡ Gemini 3.8 Flash-Lite TTS（高速・低コスト・推奨）</option>
+            <option value="gemini-3.8-flash-tts">🎙️ Gemini 3.8 Flash TTS（高音質・表現力重視）</option>
+          </select>
+          <small class="field-hint">
+            共有URL（参加者画面）で「AI音声を聞く」をONにした参加者がいる場合のみ音声を生成して配信します。
+          </small>
+        </div>
+
+        <div class="form-field">
+          <label for="ttsVoiceSelect">AI 音声の声質（ボイス）</label>
+          <select id="ttsVoiceSelect" class="select-input">
+            <option value="Kore">Kore（落ち着いた自然な声・推奨）</option>
+            <option value="Aoede">Aoede（明瞭で温かみのある声）</option>
+            <option value="Zephyr">Zephyr（軽やかで聞き取りやすい声）</option>
+            <option value="Leda">Leda（柔らかく穏やかな声）</option>
+            <option value="Charon">Charon（落ち着いた低めの男性声）</option>
+            <option value="Fenrir">Fenrir（力強く明瞭な男性声）</option>
+            <option value="Puck">Puck（親しみやすい声）</option>
+            <option value="Orus">Orus（安定したナレーション向け）</option>
+          </select>
+        </div>
+
+        <div class="form-field">
+          <label for="audioInputModeSelect">音声認識・通訳パイプライン方式</label>
+          <select id="audioInputModeSelect" class="select-input">
+            <option value="webspeech-gemini">標準（ブラウザ日本語音声認識 ＋ Gemini ストリーミング通訳・誤変換補正つき）</option>
+            <option value="gemini-live">Gemini Live API 直接音声ストリーム (gemini-3.8-live WebSocket)</option>
+          </select>
+          <small class="field-hint">
+            「標準」は日本語の認識途中経過も画面に表示され、同音異義語（「聖餐式」「贖い」等）を確実に補正してから通訳するため礼拝字幕に最適です。
+          </small>
+        </div>
+
+        <div class="form-field">
+          <label for="churchNameInput">教会名（任意・プロンプトに反映）</label>
+          <input
+            type="text"
+            id="churchNameInput"
+            class="text-input"
+            placeholder="例：〇〇キリスト教会 / Grace Church"
+          />
+        </div>
+
+        <div class="form-field">
+          <label for="autoCommitLengthInput">句節の自動区切り文字数（小さいほど高速）</label>
+          <input
+            type="number"
+            id="autoCommitLengthInput"
+            class="text-input"
+            min="15"
+            max="120"
+            value="26"
+          />
+          <small class="field-hint">読点や息継ぎごとに素早く通訳を開始する文字数目安です（初期値: 26文字）。</small>
+        </div>
+
+        <hr style="border: none; border-top: 1px solid var(--border-subtle); margin: 0.25rem 0;" />
+
+        <div class="form-field">
+          <label for="githubRepoInput">☁️ GitHub 辞書バックアップ先リポジトリ</label>
+          <input
+            type="text"
+            id="githubRepoInput"
+            class="text-input"
+            placeholder="kmats1014/lds-interpret"
+          />
+          <small class="field-hint">「ユーザー名/リポジトリ名」形式で指定します（<code>glossary-backup.json</code> に保存・復元）。</small>
+        </div>
+
+        <div class="form-field">
+          <label for="githubTokenInput">GitHub Personal Access Token（保存時のみ必要）</label>
+          <div class="password-input-wrap">
+            <input
+              type="password"
+              id="githubTokenInput"
+              class="text-input"
+              placeholder="github_pat_... または ghp_..."
+              autocomplete="off"
+            />
+            <button type="button" id="toggleGithubTokenVisibilityBtn" class="btn btn-compact btn-outline">
+              表示
+            </button>
+          </div>
+          <small class="field-hint">※ 公開リポジトリからの「GitHub復元」はトークン不要です。「GitHub保存」を使う場合のみ <code>Contents: Read &amp; write</code> 権限のトークンを入力してください。</small>
+        </div>
+      </div>
+
+      <div class="dialog-footer">
+        <button type="button" id="cancelSettingsBtn" class="btn btn-ghost">キャンセル</button>
+        <button type="submit" value="save" class="btn btn-primary">設定を保存する</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- モーダル3: 通訳結果のテキスト出力・修正取り込み・フィードバック学習ダイアログ -->
+  <dialog id="feedbackDialog" closedby="any" aria-labelledby="feedbackDialogTitle" class="dialog-wide">
+    <div class="dialog-card">
+      <div class="dialog-header">
+        <h2 id="feedbackDialogTitle">📝 通訳結果の出力・修正取り込み・フィードバック学習</h2>
+        <button type="button" class="btn-icon-close" id="closeFeedbackDialogBtn" aria-label="閉じる">✕</button>
+      </div>
+
+      <div class="dialog-body feedback-dialog-body">
+        <!-- ステップ1: テキストファイル出力 & 修正済みテキストファイルの取り込み -->
+        <section class="feedback-section">
+          <div class="feedback-section-header">
+            <h3>1. 通訳結果のテキスト出力（.txt）＆ 修正済みファイルの取り込み</h3>
+            <p class="field-hint">
+              スタートから終了までの通訳結果を <code>.txt</code> ファイルとして保存できます。出力したテキストファイル内の英語訳（<code>EN:</code> 行）や <code>[FEEDBACK]</code> 欄をメモ帳などで書き換えてから「📂 修正した .txt を取り込む」を押すと、修正内容から辞書登録と通訳ルールを自動学習します。
+            </p>
+          </div>
+          <div class="feedback-file-actions">
+            <button type="button" id="modalExportTxtBtn" class="btn btn-primary">
+              📥 スタート〜終了までの通訳結果をテキスト出力 (.txt)
+            </button>
+            <label class="btn btn-secondary file-upload-label">
+              📂 修正したテキストファイル (.txt) を取り込んで学習
+              <input type="file" id="importEditedTxtInput" accept=".txt" hidden />
+            </label>
+          </div>
+          <div id="feedbackStatusMessage" class="feedback-status-msg" hidden></div>
+        </section>
+
+        <!-- ステップ2: 通訳終了後のフィードバックをテキスト入力して今後の通訳に活かす -->
+        <section class="feedback-section">
+          <div class="feedback-section-header">
+            <h3>2. 通訳へのフィードバックをテキスト入力して今後に活かす</h3>
+            <p class="field-hint">
+              今回の通訳結果に対する改善要望や訳語の指定を入力してください。AIが用語集への自動登録と、次回以降の通訳プロンプトへの反映を行います。
+            </p>
+          </div>
+          <div class="feedback-input-group">
+            <textarea
+              id="sessionFeedbackTextarea"
+              class="text-input feedback-textarea"
+              rows="3"
+              placeholder="例：&#10;・「兄弟姉妹」は「Brothers and sisters in Christ」と訳してほしい&#10;・一文をもう少し短く、聞き取りやすいシンプルな英語にしてほしい&#10;・「礼拝堂」は「sanctuary」に統一してほしい"
+            ></textarea>
+            <div class="feedback-submit-row" style="gap: 0.5rem;">
+              <button type="button" id="clearFeedbackInputBtn" class="btn btn-outline btn-compact">
+                🗑 入力内容をクリア
+              </button>
+              <button type="button" id="applyFeedbackTextBtn" class="btn btn-primary">
+                ✨ このフィードバックを学習（辞書＆今後の通訳に反映）
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ステップ3: 画面上で通訳結果の英文を直接修正して学習させる -->
+        <section class="feedback-section">
+          <div class="feedback-section-header">
+            <div>
+              <h3>3. 今回の通訳結果を画面上で直接修正して学習させる</h3>
+              <p class="field-hint">
+                気になる英語訳を直接書き換えて「✅ 修正した通訳を反映・学習する」を押すと、画面の通訳文が更新されると同時に、修正前後の違いから用語や言い回しを学習します。
+              </p>
+            </div>
+            <button type="button" id="applyEditedSegmentsBtn" class="btn btn-secondary btn-compact">
+              ✅ 修正した通訳を反映・学習する
+            </button>
+          </div>
+          <div id="editableSegmentsContainer" class="editable-segments-list"></div>
+        </section>
+
+        <!-- ステップ4: これまでに蓄積された「通訳改善ルール」と「修正お手本メモリ」 -->
+        <section class="feedback-section">
+          <div class="feedback-section-header">
+            <div>
+              <h3>4. 学習済みの通訳改善ルール・修正お手本メモリ（今後の通訳に常時適用）</h3>
+              <p class="field-hint">
+                フィードバックや修正から学習したルールです。今後の同時通訳で自動的に遵守されます。
+              </p>
+            </div>
+            <button type="button" id="clearAllFeedbackMemoryBtn" class="btn btn-ghost btn-compact">
+              すべて消去
+            </button>
+          </div>
+          <div id="learnedRulesListContainer" class="learned-memory-list"></div>
+        </section>
+      </div>
+
+      <div class="dialog-footer">
+        <button type="button" id="closeFeedbackFooterBtn" class="btn btn-outline">閉じる</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- モーダル4: 説教原稿（日本語・英語訳）からの辞書登録候補リストアップ＆一括登録ダイアログ -->
+  <dialog id="sermonExtractDialog" closedby="any" aria-labelledby="sermonExtractDialogTitle" class="dialog-wide">
+    <div class="dialog-card">
+      <div class="dialog-header">
+        <h2 id="sermonExtractDialogTitle">📄 説教原稿（日本語・英語訳）から辞書登録候補をリストアップ</h2>
+        <button type="button" class="btn-icon-close" id="closeSermonExtractDialogBtn" aria-label="閉じる">✕</button>
+      </div>
+
+      <div class="dialog-body feedback-dialog-body">
+        <div class="info-banner">
+          <strong>💡 説教の対訳原稿から辞書を自動作成：</strong>
+          過去の説教や当日予定している説教の「日本語の文章」と「英語訳の文章」を貼り付けて <strong>「🔍 辞書登録に必要な用語をリストアップ」</strong> を押すと、教会独自の言い回し・神学用語・聖書箇所・固有名詞を自動抽出して一覧表示します。
+        </div>
+
+        <div class="form-row-2col">
+          <div class="form-field">
+            <label for="sermonJaManuscriptInput">🇯🇵 日本語の説教文章 <span class="req">*</span></label>
+            <textarea
+              id="sermonJaManuscriptInput"
+              class="text-input feedback-textarea"
+              rows="6"
+              placeholder="ここに日本語の説教原稿や段落を貼り付けてください..."
+            ></textarea>
+          </div>
+
+          <div class="form-field">
+            <label for="sermonEnManuscriptInput">🇺🇸 対応する英語訳の文章 <span class="req">*</span></label>
+            <textarea
+              id="sermonEnManuscriptInput"
+              class="text-input feedback-textarea"
+              rows="6"
+              placeholder="Paste the corresponding English translation of the sermon here..."
+            ></textarea>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button type="button" id="fillSampleSermonPairBtn" class="btn btn-compact btn-outline">
+              📋 サンプル対訳を入れて試す
+            </button>
+            <button type="button" id="clearSermonExtractInputsBtn" class="btn btn-compact btn-danger-outline">
+              🗑 入力内容をクリア
+            </button>
+          </div>
+          <button type="button" id="runSermonExtractBtn" class="btn btn-primary">
+            🔍 辞書登録に必要な用語をリストアップ
+          </button>
+        </div>
+
+        <div id="sermonExtractStatusMsg" class="feedback-status-msg" hidden></div>
+
+        <!-- 抽出された候補リスト -->
+        <section id="sermonCandidatesSection" class="feedback-section" hidden>
+          <div class="feedback-section-header">
+            <div>
+              <h3>抽出された辞書登録候補リスト</h3>
+              <p class="field-hint">
+                登録したい用語にチェックを入れ（訳語の直接編集も可能）、「✅ チェックした用語を辞書に一括登録」を押してください。
+              </p>
+            </div>
+            <button type="button" id="registerSelectedCandidatesBtn" class="btn btn-primary btn-compact">
+              ✅ チェックした用語を辞書に一括登録
+            </button>
+          </div>
+          <div id="sermonCandidatesListContainer" class="editable-segments-list" style="max-height: 290px;"></div>
+        </section>
+      </div>
+
+      <div class="dialog-footer">
+        <button type="button" id="closeSermonExtractFooterBtn" class="btn btn-outline">閉じる</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- モーダル5: 参加者用リアルタイム字幕 URL・QRコード発行ダイアログ -->
+  <dialog id="shareDialog" closedby="any" aria-labelledby="shareDialogTitle" class="dialog-wide">
+    <div class="dialog-card">
+      <div class="dialog-header">
+        <div style="display: flex; align-items: center; gap: 0.6rem;">
+          <span style="font-size: 1.35rem;">📱</span>
+          <div>
+            <h2 id="shareDialogTitle">参加者用 リアルタイム字幕 URL・QRコード</h2>
+            <p class="field-hint" style="margin: 0.15rem 0 0;">
+              会衆・信徒・ビジターがスマートフォンで各自の母国語のリアルタイム字幕を閲覧できます（アプリ不要）
+            </p>
+          </div>
+        </div>
+        <button type="button" class="btn-icon-close" id="closeShareDialogBtn" aria-label="閉じる">✕</button>
+      </div>
+
+      <div class="dialog-body share-dialog-body">
+        <div class="share-status-strip">
+          <div class="share-room-meta">
+            <span class="share-live-badge"><span class="pulse-dot"></span> P2Pライブ配信中</span>
+            <span class="share-building-room" id="shareBuildingRoomLabel">🏢 広島（白島）— 礼拝堂</span>
+            <span class="share-room-id">配信ルーム: <strong id="shareRoomIdLabel">hiroshima-hakushima-chapel</strong></span>
+            <span class="connected-peers-count" id="connectedPeersCountLabel">👥 接続中: 0人</span>
+          </div>
+          <div style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+            <button type="button" id="printQrPosterBtn" class="btn btn-compact btn-primary" title="建物名・部屋名入りの常設掲示用QRポスターを印刷します">
+              🖨️ 掲示用QRを印刷
+            </button>
+            <button type="button" id="editRoomBtn" class="btn btn-compact btn-outline" title="すでに共有したルームIDに合わせて指定します">
+              ✏️ ルームIDを指定
+            </button>
+            <button type="button" id="regenerateRoomBtn" class="btn btn-compact btn-outline" title="新しいルームIDを再発行します">
+              🔄 ルームIDを更新
+            </button>
+          </div>
+        </div>
+
+        <div class="share-cards-container" id="shareCardsContainer">
+          <!-- JSで現在選択中の通訳言語ごとにQRコードとURLカードを描画 -->
+        </div>
+
+        <div class="info-banner" style="margin-top: 0.5rem;">
+          💡 <strong>使い方：</strong>
+          プロジェクターでQRコードを拡大表示するか、LINE・メール等でURLを共有してください。参加者がスマホで開くと、話された通訳字幕がリアルタイムに手元で流れます。
+        </div>
+      </div>
+
+      <div class="dialog-footer">
+        <button type="button" id="closeShareFooterBtn" class="btn btn-primary">閉じる</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LDS Interpret — 参加者用リアルタイム字幕</title>
+  <script src="./mqtt.min.js"></script>
+  <style>
+    :root {
+      /* Atlassian Design System (ADS) Light Tokens */
+      --ds-surface: #ffffff;
+      --ds-surface-sunken: #f7f8f9;
+      --ds-text: #172b4d;
+      --ds-text-subtlest: #626f86;
+      --ds-border: #dcdfe4;
+      --ds-bg-neutral: #f1f2f4;
+      --ds-bg-neutral-hovered: #dcdfe4;
+      --ds-bg-brand-bold: #0c66e4;
+      --ds-bg-brand-bold-hovered: #0055cc;
+      --ds-bg-brand-text: #ffffff;
+      --ds-bg-success-bold: #1f845a;
+      --ds-radius-medium: 6px;
+      --ds-radius-large: 8px;
+
+      --bg: var(--ds-surface);
+      --text: var(--ds-text);
+      --text-muted: var(--ds-text-subtlest);
+      --border: var(--ds-border);
+      --elevated: var(--ds-surface-sunken);
+      --primary: var(--ds-bg-brand-bold);
+      --green: var(--ds-bg-success-bold);
+      --font-scale: 1.25rem;
+    }
+
+    body[data-theme="dark"] {
+      /* Atlassian Design System (ADS) Dark Tokens */
+      --ds-surface: #1d2125;
+      --ds-surface-sunken: #161a1d;
+      --ds-text: #b6c2cf;
+      --ds-text-subtlest: #8c9bab;
+      --ds-border: #38414a;
+      --ds-bg-neutral: #22272b;
+      --ds-bg-neutral-hovered: #2c333a;
+      --ds-bg-brand-bold: #579dff;
+      --ds-bg-brand-bold-hovered: #85b8ff;
+      --ds-bg-brand-text: #1d2125;
+      --ds-bg-success-bold: #4bce97;
+
+      --bg: var(--ds-surface);
+      --text: var(--ds-text);
+      --text-muted: var(--ds-text-subtlest);
+      --border: var(--ds-border);
+      --elevated: var(--ds-surface-sunken);
+      --primary: var(--ds-bg-brand-bold);
+      --green: var(--ds-bg-success-bold);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    .viewer-header {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.45rem;
+      padding: 0.6rem 0.9rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--elevated);
+      flex-shrink: 0;
+    }
+
+    .header-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .brand-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.74rem;
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #f59e0b;
+    }
+
+    .status-badge.connected .status-dot {
+      background: var(--green);
+      box-shadow: 0 0 6px rgba(22, 163, 74, 0.6);
+    }
+
+    .status-badge.connected {
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    .controls-group {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.4rem;
+      width: 100%;
+    }
+
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      width: 100%;
+    }
+
+    .select-input {
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: var(--ds-radius-medium);
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .btn-icon {
+      background: var(--ds-bg-neutral);
+      border: 1px solid transparent;
+      color: var(--text);
+      border-radius: var(--ds-radius-medium);
+      padding: 6px 10px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.15s ease;
+    }
+
+    .btn-icon:hover {
+      background: var(--ds-bg-neutral-hovered);
+    }
+
+    .btn-audio {
+      gap: 6px;
+      background: transparent;
+      border: 1px solid var(--ds-bg-brand-bold);
+      color: var(--ds-bg-brand-bold);
+    }
+
+    .btn-audio:hover {
+      background: rgba(12, 102, 228, 0.08);
+    }
+
+    .btn-audio.is-active {
+      background: var(--ds-bg-brand-bold);
+      border-color: var(--ds-bg-brand-bold);
+      color: var(--ds-bg-brand-text);
+    }
+
+    .btn-audio.is-active:hover {
+      background: var(--ds-bg-brand-bold-hovered);
+      border-color: var(--ds-bg-brand-bold-hovered);
+    }
+
+    .viewer-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.25rem 1.5rem 4rem;
+      position: relative;
+    }
+
+    .stream-text {
+      font-size: var(--font-scale);
+      line-height: 1.85;
+      letter-spacing: 0.02em;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .placeholder-hint {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      font-style: italic;
+      white-space: normal;
+    }
+
+    .chunk-new {
+      animation: fadeIn 0.4s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0.2; transform: translateY(2px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .btn-scroll-bottom {
+      position: fixed;
+      bottom: 1.25rem;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 0.5rem 1.15rem;
+      border-radius: 999px;
+      background: var(--primary);
+      color: #ffffff;
+      font-size: 0.82rem;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+      z-index: 20;
+    }
+
+    .btn-scroll-bottom[hidden] {
+      display: none;
+    }
+
+    .connecting-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      padding: 1.5rem;
+      text-align: center;
+      z-index: 10;
+    }
+
+    .connecting-overlay[hidden] {
+      display: none;
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .room-location-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      font-size: 0.78rem;
+    }
+
+    .room-location-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(12, 102, 228, 0.1);
+      color: var(--ds-bg-brand-bold);
+      font-weight: 700;
+    }
+
+    .btn-switch-room {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-switch-room:hover {
+      background: var(--ds-bg-neutral);
+      color: var(--text);
+    }
+
+    .building-lobby {
+      max-width: 680px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .building-lobby[hidden] {
+      display: none !important;
+    }
+
+    .lobby-heading {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .lobby-sub {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .lobby-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+    }
+
+    .lobby-card {
+      background: var(--elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--ds-radius-large);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .lobby-card-title {
+      font-size: 0.96rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .lobby-rooms {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .lobby-room-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: var(--ds-radius-medium);
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .lobby-room-btn:hover {
+      border-color: var(--ds-bg-brand-bold);
+      background: rgba(12, 102, 228, 0.06);
+    }
+
+    .live-pill {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(31, 132, 90, 0.14);
+      color: var(--green);
+    }
+
+    .live-pill[hidden] {
+      display: none !important;
+    }
+  </style>
+</head>
+<body data-theme="light">
+  <header class="viewer-header">
+    <div class="header-top-row">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <div class="brand-title">
+          <span>📖</span>
+          <span id="headerTitle">LDS Interpret 字幕</span>
+        </div>
+        <div class="room-location-bar" id="roomLocationBar" hidden>
+          <span class="room-location-badge" id="roomLocationBadge">📍</span>
+          <button type="button" id="switchBuildingBtn" class="btn-switch-room">変更</button>
+        </div>
+      </div>
+
+      <div class="status-badge" id="statusBadge">
+        <span class="status-dot"></span>
+        <span id="statusText">接続中...</span>
+      </div>
+    </div>
+
+    <div class="controls-group">
+      <div class="controls-row">
+        <select id="viewerLangSelect" class="select-input" aria-label="Language">
+          <option value="en">🇺🇸 English</option>
+          <option value="tl">🇵🇭 Tagalog</option>
+          <option value="id">🇮🇩 Bahasa Indonesia</option>
+          <option value="ja">🇯🇵 日本語</option>
+        </select>
+
+        <button type="button" id="audioToggleBtn" class="btn-icon btn-audio" aria-pressed="false" title="確定した通訳をAI音声で順番に読み上げます">AI音声を聞く</button>
+      </div>
+
+      <div class="controls-row">
+        <button type="button" id="fontDecBtn" class="btn-icon" title="文字を小さく">A-</button>
+        <button type="button" id="fontIncBtn" class="btn-icon" title="文字を大きく">A+</button>
+        <button type="button" id="themeToggleBtn" class="btn-icon" title="ダーク / ライト切り替え">🌓</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="viewer-content" id="viewerScrollContainer">
+    <section class="building-lobby" id="buildingLobby" hidden>
+      <div>
+        <h2 class="lobby-heading" id="lobbyHeading">視聴する教会（建物）・部屋を選択</h2>
+        <p class="lobby-sub" id="lobbySub">現在配信中の部屋には「Live」が表示されます。</p>
+      </div>
+      <div class="lobby-grid" id="lobbyGrid"></div>
+    </section>
+
+    <div class="connecting-overlay" id="connectingOverlay">
+      <div class="spinner" id="connectingSpinner"></div>
+      <p id="connectingMessage" style="font-size: 0.95rem; font-weight: 600;">ルーム「<span id="overlayRoomId"></span>」に接続中...</p>
+      <p id="connectingSub" class="field-hint" style="color: var(--text-muted); font-size: 0.82rem; max-width: 340px; line-height: 1.5;">
+        通訳ホスト（パソコン側）の準備を待機しています。<br>配信が始まると自動的に字幕が流れます。
+      </p>
+      <button type="button" id="manualRetryBtn" class="btn-icon" style="margin-top: 0.6rem; padding: 0.4rem 1.1rem; border-radius: 999px; background: var(--primary); color: #fff; border: none; cursor: pointer; display: none;">
+        🔄 今すぐ再接続を試す
+      </button>
+    </div>
+
+    <div class="stream-text" id="streamText">
+      <div class="placeholder-hint" id="streamPlaceholder" style="text-align: center; margin: 2rem auto; max-width: 440px; padding: 1.5rem; border: 1px dashed var(--border); border-radius: 12px; background: var(--elevated);">
+        <p style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.6rem;" id="placeholderStatusTitle">⏳ 通訳ホストの配信開始を待機中</p>
+        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.6; margin-bottom: 1rem;" id="placeholderStatusDesc">
+          通訳アプリ（パソコン側）で通訳が開始されると、自動的にこの画面にリアルタイム字幕が表示されます。<br>
+          この画面を開いたままお待ちください。
+        </p>
+        <button type="button" id="placeholderRetryBtn" class="btn-icon" style="padding: 0.4rem 1rem; border-radius: 999px; background: var(--primary); color: #fff; border: none; font-size: 0.82rem; cursor: pointer;">
+          🔄 今すぐ再接続を試す
+        </button>
+      </div>
+      <span id="streamCommitted"></span>
+      <span id="streamInterim" style="opacity: 0.65;"></span>
+    </div>
+
+    <button type="button" id="scrollToLatestBtn" class="btn-scroll-bottom" hidden>
+      ⬇ 最新の字幕へ戻る
+    </button>
+  </main>
+
+  <script type="module">
+    import {
+      HIROSHIMA_BUILDINGS,
+      buildHiroshimaRoomId,
+      findBuildingAndRoom,
+    } from './buildings-config.js';
+
+    const UI_STRINGS = {
+      en: {
+        pageTitle: 'LDS Interpret — Live Subtitles',
+        headerTitle: 'LDS Interpret Subtitles',
+        langAria: 'Select subtitle language',
+        audioOff: 'Listen with AI Voice',
+        audioOn: 'AI Voice ON',
+        audioPlaying: 'Playing AI Voice…',
+        audioTitle: 'Read finalized translations aloud with AI voice',
+        fontDecTitle: 'Decrease font size',
+        fontIncTitle: 'Increase font size',
+        themeTitle: 'Toggle dark / light theme',
+        statusConnecting: 'Connecting...',
+        statusReconnecting: 'Reconnecting...',
+        statusStandby: 'Waiting for host',
+        statusConnected: '🟢 Connected (Live)',
+        overlayConnecting: (r) => `Connecting to room "${r}"...`,
+        overlaySub: 'Waiting for the interpreter host (PC).<br>Subtitles will appear automatically once streaming starts.',
+        retryBtn: '🔄 Retry Connection',
+        retryingBtn: '🔄 Retrying...',
+        standbyTitle: '⏳ Waiting for Interpreter Host',
+        standbyDesc: (r) => `Waiting for the host in room "<b>${r}</b>".<br>Subtitles will appear automatically once the host starts.`,
+        standbyOfflineDesc: (r) => `The host (room "<b>${r}</b>") paused or is restarting. It will reconnect automatically when resumed.`,
+        connectedTitle: '🟢 Connected to Host (Waiting for speech)',
+        connectedDesc: 'Live subtitles will appear here as soon as the speaker begins...',
+        scrollLatest: '⬇ Jump to Latest',
+        libErrorTitle: '⚠️ Failed to load communication library',
+        libErrorSub: 'Please check your network connection and reload the page.',
+        reloadBtn: '🔄 Reload Page',
+      },
+      tl: {
+        pageTitle: 'LDS Interpret — Live na Subtitle',
+        headerTitle: 'LDS Interpret Subtitle',
+        langAria: 'Pumili ng wika ng subtitle',
+        audioOff: 'Pakinggan gamit ang AI',
+        audioOn: 'AI Voice ON',
+        audioPlaying: 'Nagpe-play…',
+        audioTitle: 'Basahin nang malakas ang mga natapos na salin gamit ang boses ng AI',
+        fontDecTitle: 'Paliitin ang teksto',
+        fontIncTitle: 'Palakihin ang teksto',
+        themeTitle: 'Lumipat ng dark / light theme',
+        statusConnecting: 'Kumokonekta...',
+        statusReconnecting: 'Muling kumokonekta...',
+        statusStandby: 'Naghihintay sa host',
+        statusConnected: '🟢 Nakakonekta (Live)',
+        overlayConnecting: (r) => `Kumokonekta sa room "${r}"...`,
+        overlaySub: 'Naghihintay sa interpreter host (PC).<br>Awtomatikong lalabas ang mga subtitle kapag nagsimula na.',
+        retryBtn: '🔄 Subukang Kumonekta Muli',
+        retryingBtn: '🔄 Sinusubukan...',
+        standbyTitle: '⏳ Naghihintay sa Interpreter Host',
+        standbyDesc: (r) => `Naghihintay sa host sa room "<b>${r}</b>".<br>Awtomatikong lalabas ang subtitle kapag nagsimula na ang host.`,
+        standbyOfflineDesc: (r) => `Nakahinto o nagre-restart ang host (room "<b>${r}</b>"). Awtomatikong kokonekta kapag nagpatuloy.`,
+        connectedTitle: '🟢 Nakakonekta sa Host (Naghihintay ng salita)',
+        connectedDesc: 'Lalabas dito ang live na subtitle kapag nagsimula nang magsalita...',
+        scrollLatest: '⬇ Pumunta sa Pinakabago',
+        libErrorTitle: '⚠️ Nabigong i-load ang communication library',
+        libErrorSub: 'Pakisuri ang iyong koneksyon sa internet at i-reload ang pahina.',
+        reloadBtn: '🔄 I-reload ang Pahina',
+      },
+      id: {
+        pageTitle: 'LDS Interpret — Terjemahan Langsung',
+        headerTitle: 'LDS Interpret Terjemahan',
+        langAria: 'Pilih bahasa terjemahan',
+        audioOff: 'Dengarkan Suara AI',
+        audioOn: 'Suara AI ON',
+        audioPlaying: 'Memutar…',
+        audioTitle: 'Bacakan hasil terjemahan dengan suara AI',
+        fontDecTitle: 'Perkecil teks',
+        fontIncTitle: 'Perbesar teks',
+        themeTitle: 'Ganti tema gelap / terang',
+        statusConnecting: 'Menghubungkan...',
+        statusReconnecting: 'Menghubungkan ulang...',
+        statusStandby: 'Menunggu host',
+        statusConnected: '🟢 Terhubung (Langsung)',
+        overlayConnecting: (r) => `Menghubungkan ke ruang "${r}"...`,
+        overlaySub: 'Menunggu host penerjemah (PC).<br>Terjemahan akan muncul otomatis setelah siaran dimulai.',
+        retryBtn: '🔄 Coba Hubungkan Lagi',
+        retryingBtn: '🔄 Mencoba lagi...',
+        standbyTitle: '⏳ Menunggu Host Penerjemah',
+        standbyDesc: (r) => `Menunggu host di ruang "<b>${r}</b>".<br>Terjemahan akan muncul otomatis saat host mulai.`,
+        standbyOfflineDesc: (r) => `Host (ruang "<b>${r}</b>") berhenti atau sedang memulai ulang. Akan terhubung otomatis saat dilanjutkan.`,
+        connectedTitle: '🟢 Terhubung ke Host (Menunggu suara)',
+        connectedDesc: 'Terjemahan langsung akan muncul di sini saat pembicara mulai...',
+        scrollLatest: '⬇ Kembali ke Terbaru',
+        libErrorTitle: '⚠️ Gagal memuat pustaka komunikasi',
+        libErrorSub: 'Periksa koneksi jaringan Anda dan muat ulang halaman.',
+        reloadBtn: '🔄 Muat Ulang Halaman',
+      },
+      ja: {
+        pageTitle: 'LDS Interpret — 参加者用リアルタイム字幕',
+        headerTitle: 'LDS Interpret 字幕',
+        langAria: '字幕言語の選択',
+        audioOff: 'AI音声を聞く',
+        audioOn: 'AI音声 ON',
+        audioPlaying: 'AI音声 再生中…',
+        audioTitle: '確定した通訳をAI音声で順番に読み上げます',
+        fontDecTitle: '文字を小さく',
+        fontIncTitle: '文字を大きく',
+        themeTitle: 'ダーク / ライト切り替え',
+        statusConnecting: '接続中...',
+        statusReconnecting: '再接続中...',
+        statusStandby: '待機中 (ホスト準備待ち)',
+        statusConnected: '🟢 接続中 (リアルタイム受信)',
+        overlayConnecting: (r) => `ルーム「${r}」に接続中...`,
+        overlaySub: '通訳ホスト（パソコン側）の準備を待機しています。<br>配信が始まると自動的に字幕が流れます。',
+        retryBtn: '🔄 今すぐ再接続を試す',
+        retryingBtn: '🔄 再試行中...',
+        standbyTitle: '⏳ 通訳ホストの配信開始を待機中',
+        standbyDesc: (r) => `ルーム「<b>${r}</b>」の通訳ホスト（パソコン側）を待機しています。<br>パソコン側で通訳アプリが開かれると自動的に接続されます。`,
+        standbyOfflineDesc: (r) => `ホスト（ルーム「<b>${r}</b>」）が終了または再起動中です。再開すると自動的に接続されます。`,
+        connectedTitle: '🟢 ホストに接続しました（通訳待機中）',
+        connectedDesc: '通訳が話すと、ここにリアルタイムで字幕が流れ始めます...',
+        scrollLatest: '⬇ 最新の字幕へ戻る',
+        libErrorTitle: '⚠️ 通信ライブラリの読み込みに失敗しました',
+        libErrorSub: 'ネットワーク接続を確認し、ページを再読み込みしてください。',
+        reloadBtn: '🔄 ページを再読み込み',
+      },
+    };
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const rawRoomParam = urlParams.get('room');
+    const isLobbyMode = !rawRoomParam;
+    const roomId = rawRoomParam || 'hiroshima-hakushima-chapel';
+    let currentLang = UI_STRINGS[urlParams.get('lang')] ? urlParams.get('lang') : 'en';
+    let connectionState = isLobbyMode ? 'lobby' : 'connecting'; // 'lobby' | 'connecting' | 'reconnecting' | 'standby' | 'standbyOffline' | 'connected'
+    let dynamicLocationMeta = null;
+
+    function t(key, ...args) {
+      const dict = UI_STRINGS[currentLang] || UI_STRINGS.en;
+      const val = dict[key] ?? UI_STRINGS.en[key];
+      return typeof val === 'function' ? val(...args) : val;
+    }
+
+    const headerTitle = document.getElementById('headerTitle');
+    const viewerLangSelect = document.getElementById('viewerLangSelect');
+    const statusBadge = document.getElementById('statusBadge');
+    const statusText = document.getElementById('statusText');
+    const connectingOverlay = document.getElementById('connectingOverlay');
+    const connectingMessage = document.getElementById('connectingMessage');
+    const streamScroll = document.getElementById('viewerScrollContainer');
+    const streamPlaceholder = document.getElementById('streamPlaceholder');
+    const streamCommitted = document.getElementById('streamCommitted');
+    const streamInterim = document.getElementById('streamInterim');
+    const scrollToLatestBtn = document.getElementById('scrollToLatestBtn');
+    const fontIncBtn = document.getElementById('fontIncBtn');
+    const fontDecBtn = document.getElementById('fontDecBtn');
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    const audioToggleBtn = document.getElementById('audioToggleBtn');
+    const roomLocationBar = document.getElementById('roomLocationBar');
+    const roomLocationBadge = document.getElementById('roomLocationBadge');
+    const switchBuildingBtn = document.getElementById('switchBuildingBtn');
+    const buildingLobby = document.getElementById('buildingLobby');
+    const lobbyHeading = document.getElementById('lobbyHeading');
+    const lobbySub = document.getElementById('lobbySub');
+    const lobbyGrid = document.getElementById('lobbyGrid');
+    const streamTextEl = document.getElementById('streamText');
+    const liveRoomsMap = new Map(); // fullRoomId -> { online, ts }
+
+    let historyRecords = [];
+    let autoScroll = true;
+    let fontRem = 1.25;
+
+    // AI音声再生キュー（スマホ自動再生制限解除＋順次再生）
+    let audioEnabled = false;
+    const audioQueue = [];
+    let isPlayingAudio = false;
+    const audioPlayer = new Audio();
+    audioPlayer.playsInline = true;
+    let currentAudioObjectUrl = null;
+
+    function unlockAudioPlayback() {
+      try {
+        // ユーザー操作内で無音WAVを再生し、モバイルブラウザの再生ロックを解除
+        audioPlayer.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+        const p = audioPlayer.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => {
+            audioPlayer.pause();
+            audioPlayer.currentTime = 0;
+          }).catch(() => {});
+        }
+      } catch {}
+    }
+
+    function stopAndClearAudioQueue() {
+      audioQueue.length = 0;
+      isPlayingAudio = false;
+      try {
+        audioPlayer.pause();
+        audioPlayer.removeAttribute('src');
+        audioPlayer.load();
+      } catch {}
+      if (currentAudioObjectUrl) {
+        URL.revokeObjectURL(currentAudioObjectUrl);
+        currentAudioObjectUrl = null;
+      }
+      updateAudioToggleUI();
+    }
+
+    function updateAudioToggleUI() {
+      if (!audioToggleBtn) return;
+      audioToggleBtn.setAttribute('aria-pressed', String(audioEnabled));
+      audioToggleBtn.classList.toggle('is-active', audioEnabled);
+      audioToggleBtn.title = t('audioTitle');
+      if (!audioEnabled) {
+        audioToggleBtn.textContent = t('audioOff');
+      } else if (isPlayingAudio) {
+        audioToggleBtn.textContent = t('audioPlaying');
+      } else {
+        audioToggleBtn.textContent = t('audioOn');
+      }
+    }
+
+    function applyViewerLocale() {
+      document.documentElement.lang = currentLang;
+      document.title = t('pageTitle');
+      if (headerTitle) headerTitle.textContent = t('headerTitle');
+      if (viewerLangSelect) viewerLangSelect.setAttribute('aria-label', t('langAria'));
+      if (fontDecBtn) fontDecBtn.title = t('fontDecTitle');
+      if (fontIncBtn) fontIncBtn.title = t('fontIncTitle');
+      if (themeToggleBtn) themeToggleBtn.title = t('themeTitle');
+      if (scrollToLatestBtn) scrollToLatestBtn.textContent = t('scrollLatest');
+      if (manualRetryBtn) manualRetryBtn.textContent = t('retryBtn');
+      if (placeholderRetryBtn) placeholderRetryBtn.textContent = t('retryBtn');
+      const connectingSub = document.getElementById('connectingSub');
+      if (connectingSub) connectingSub.innerHTML = t('overlaySub');
+      if (connectingMessage && connectionState === 'connecting') {
+        connectingMessage.textContent = t('overlayConnecting', roomId);
+      }
+
+      if (connectionState === 'connected') {
+        statusText.textContent = t('statusConnected');
+        if (placeholderStatusTitle) placeholderStatusTitle.textContent = t('connectedTitle');
+        if (placeholderStatusDesc) placeholderStatusDesc.innerHTML = t('connectedDesc');
+      } else if (connectionState === 'standby') {
+        statusText.textContent = t('statusStandby');
+        if (placeholderStatusTitle) placeholderStatusTitle.textContent = t('standbyTitle');
+        if (placeholderStatusDesc) placeholderStatusDesc.innerHTML = t('standbyDesc', roomId);
+      } else if (connectionState === 'standbyOffline') {
+        statusText.textContent = t('statusStandby');
+        if (placeholderStatusTitle) placeholderStatusTitle.textContent = t('standbyTitle');
+        if (placeholderStatusDesc) placeholderStatusDesc.innerHTML = t('standbyOfflineDesc', roomId);
+      } else if (connectionState === 'reconnecting') {
+        statusText.textContent = t('statusReconnecting');
+      } else if (connectionState === 'lobby') {
+        statusText.textContent = currentLang === 'ja' ? '建物を選択' : 'Select Building';
+      } else {
+        statusText.textContent = t('statusConnecting');
+      }
+
+      updateLocationBadge();
+      if (isLobbyMode) {
+        renderBuildingLobby();
+      }
+      updateAudioToggleUI();
+    }
+
+    function updateLocationBadge() {
+      if (!roomLocationBar || !roomLocationBadge) return;
+      if (isLobbyMode) {
+        roomLocationBar.hidden = true;
+        return;
+      }
+      roomLocationBar.hidden = false;
+      const preset = findBuildingAndRoom(roomId);
+      const bName =
+        dynamicLocationMeta?.buildingNameEn && currentLang !== 'ja'
+          ? dynamicLocationMeta.buildingNameEn
+          : dynamicLocationMeta?.buildingName ||
+            (currentLang === 'ja' ? preset?.building?.nameJa : preset?.building?.nameEn) ||
+            roomId;
+      const rName =
+        dynamicLocationMeta?.roomNameEn && currentLang !== 'ja'
+          ? dynamicLocationMeta.roomNameEn
+          : dynamicLocationMeta?.roomName ||
+            (currentLang === 'ja' ? preset?.room?.nameJa : preset?.room?.nameEn) ||
+            '';
+      roomLocationBadge.textContent = rName ? `📍 ${bName} · ${rName}` : `📍 ${bName}`;
+      if (switchBuildingBtn) {
+        switchBuildingBtn.textContent =
+          currentLang === 'ja' ? '建物変更' : currentLang === 'tl' ? 'Palitan' : currentLang === 'id' ? 'Ganti' : 'Switch';
+      }
+    }
+
+    switchBuildingBtn?.addEventListener('click', () => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('room');
+      url.searchParams.set('lang', currentLang);
+      window.location.href = url.toString();
+    });
+
+    function renderBuildingLobby() {
+      if (!buildingLobby || !lobbyGrid) return;
+      const lobbyCopy = {
+        en: { h: 'Select Church Building & Room', s: 'Rooms currently streaming show a "Live" badge.' },
+        tl: { h: 'Pumili ng Gusali at Silid ng Simbahan', s: 'May "Live" badge ang mga silid na kasalukuyang nagbo-broadcast.' },
+        id: { h: 'Pilih Gedung & Ruangan Gereja', s: 'Ruangan yang sedang siaran menampilkan label "Live".' },
+        ja: { h: '視聴する教会（建物）・部屋を選択', s: '現在配信中の部屋には「Live」が表示されます。' },
+      }[currentLang] || { h: 'Select Church Building & Room', s: '' };
+
+      if (lobbyHeading) lobbyHeading.textContent = lobbyCopy.h;
+      if (lobbySub) lobbySub.textContent = lobbyCopy.s;
+
+      lobbyGrid.innerHTML = '';
+      for (const b of HIROSHIMA_BUILDINGS) {
+        const card = document.createElement('div');
+        card.className = 'lobby-card';
+
+        const title = document.createElement('div');
+        title.className = 'lobby-card-title';
+        title.textContent = `🏢 ${currentLang === 'ja' ? b.nameJa : `${b.nameEn} (${b.nameJa})`}`;
+        card.appendChild(title);
+
+        const roomsWrap = document.createElement('div');
+        roomsWrap.className = 'lobby-rooms';
+
+        for (const r of b.rooms) {
+          const fullRoomId = buildHiroshimaRoomId(b.id, r.id);
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'lobby-room-btn';
+
+          const labelSpan = document.createElement('span');
+          labelSpan.textContent = currentLang === 'ja' ? r.nameJa : `${r.nameEn} / ${r.nameJa}`;
+          btn.appendChild(labelSpan);
+
+          const liveState = liveRoomsMap.get(fullRoomId);
+          const isLive = Boolean(liveState?.online) && Date.now() - (liveState?.ts || 0) < 45000;
+          const pill = document.createElement('span');
+          pill.className = 'live-pill';
+          pill.textContent = '🟢 Live';
+          pill.hidden = !isLive;
+          btn.appendChild(pill);
+
+          btn.addEventListener('click', () => {
+            const url = new URL(window.location.href);
+            url.searchParams.set('room', fullRoomId);
+            url.searchParams.set('lang', currentLang);
+            window.location.href = url.toString();
+          });
+
+          roomsWrap.appendChild(btn);
+        }
+
+        card.appendChild(roomsWrap);
+        lobbyGrid.appendChild(card);
+      }
+    }
+
+    function base64ToBlobUrl(base64Data, mimeType) {
+      const bin = atob(base64Data);
+      const len = bin.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = bin.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: mimeType || 'audio/wav' });
+      return URL.createObjectURL(blob);
+    }
+
+    function processAudioQueue() {
+      if (!audioEnabled || isPlayingAudio || audioQueue.length === 0) {
+        updateAudioToggleUI();
+        return;
+      }
+      const next = audioQueue.shift();
+      if (!next || !next.data) {
+        processAudioQueue();
+        return;
+      }
+      isPlayingAudio = true;
+      updateAudioToggleUI();
+
+      try {
+        if (currentAudioObjectUrl) {
+          URL.revokeObjectURL(currentAudioObjectUrl);
+          currentAudioObjectUrl = null;
+        }
+        currentAudioObjectUrl = base64ToBlobUrl(next.data, next.mimeType);
+        audioPlayer.src = currentAudioObjectUrl;
+        audioPlayer.onended = () => {
+          isPlayingAudio = false;
+          processAudioQueue();
+        };
+        audioPlayer.onerror = () => {
+          isPlayingAudio = false;
+          processAudioQueue();
+        };
+        const playPromise = audioPlayer.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch((err) => {
+            console.warn('Audio play blocked/failed:', err);
+            isPlayingAudio = false;
+            updateAudioToggleUI();
+          });
+        }
+      } catch (err) {
+        console.warn('Audio queue error:', err);
+        isPlayingAudio = false;
+        processAudioQueue();
+      }
+    }
+
+    function publishAudioSubscription() {
+      if (mqttClient && mqttClient.connected) {
+        mqttClient.publish(
+          ctrlTopic,
+          JSON.stringify({
+            type: 'audio_sub',
+            clientId: viewerClientId,
+            lang: currentLang,
+            enabled: audioEnabled,
+          })
+        );
+      }
+    }
+
+    audioToggleBtn?.addEventListener('click', () => {
+      audioEnabled = !audioEnabled;
+      if (audioEnabled) {
+        unlockAudioPlayback();
+        updateAudioToggleUI();
+        publishAudioSubscription();
+      } else {
+        stopAndClearAudioQueue();
+        publishAudioSubscription();
+      }
+    });
+
+    viewerLangSelect.value = currentLang;
+
+    // 言語切替
+    viewerLangSelect.addEventListener('change', () => {
+      currentLang = viewerLangSelect.value;
+      applyViewerLocale();
+      renderCurrentLangStream();
+      if (audioEnabled) {
+        stopAndClearAudioQueue();
+        publishAudioSubscription();
+      }
+    });
+
+    // 文字サイズ調整
+    fontIncBtn.addEventListener('click', () => {
+      fontRem = Math.min(2.5, fontRem + 0.15);
+      document.documentElement.style.setProperty('--font-scale', `${fontRem}rem`);
+    });
+    fontDecBtn.addEventListener('click', () => {
+      fontRem = Math.max(0.85, fontRem - 0.15);
+      document.documentElement.style.setProperty('--font-scale', `${fontRem}rem`);
+    });
+
+    // テーマ切替
+    themeToggleBtn.addEventListener('click', () => {
+      const isDark = document.body.dataset.theme === 'dark';
+      document.body.dataset.theme = isDark ? 'light' : 'dark';
+    });
+
+    // スクロール検知
+    streamScroll.addEventListener('scroll', () => {
+      const distance = streamScroll.scrollHeight - streamScroll.scrollTop - streamScroll.clientHeight;
+      if (distance > 60) {
+        autoScroll = false;
+        scrollToLatestBtn.hidden = false;
+      } else {
+        autoScroll = true;
+        scrollToLatestBtn.hidden = true;
+      }
+    });
+
+    scrollToLatestBtn.addEventListener('click', () => {
+      autoScroll = true;
+      scrollToLatestBtn.hidden = true;
+      scrollToBottom();
+    });
+
+    function scrollToBottom() {
+      if (autoScroll) {
+        requestAnimationFrame(() => {
+          streamScroll.scrollTo({ top: streamScroll.scrollHeight, behavior: 'smooth' });
+        });
+      }
+    }
+
+    function renderCurrentLangStream() {
+      streamPlaceholder.style.display = historyRecords.length > 0 ? 'none' : 'block';
+      streamCommitted.innerHTML = '';
+      streamInterim.textContent = '';
+
+      for (const entry of historyRecords) {
+        if (entry.isParagraphBreak) {
+          streamCommitted.appendChild(document.createTextNode('\n\n'));
+          continue;
+        }
+
+        const text =
+          entry.translations?.[currentLang] ||
+          (currentLang === 'ja' ? entry.sourceText || entry.ja : entry.translations?.en || entry.en || '');
+
+        if (text) {
+          const span = document.createElement('span');
+          span.className = 'chunk-new';
+          span.textContent = text + (currentLang === 'ja' ? '' : ' ');
+          streamCommitted.appendChild(span);
+        }
+      }
+      scrollToBottom();
+    }
+
+    // MQTT over Secure WebSocket (WSS) によるホスト接続（携帯4G/5G・教会Wi-FiでもNAT越え不要で確実接続）
+    const topicPrefix = `lds-interpret/room/${roomId}`;
+    const streamTopic = `${topicPrefix}/stream`;
+    const presenceTopic = `${topicPrefix}/presence`;
+    const ctrlTopic = `${topicPrefix}/ctrl`;
+    const viewerClientId = `lds-viewer-${Math.random().toString(36).slice(2, 8)}`;
+
+    let mqttClient = null;
+    let hostOnline = false;
+    let connectTimeout = null;
+    let pingTimer = null;
+
+    const overlayRoomId = document.getElementById('overlayRoomId');
+    if (overlayRoomId) overlayRoomId.textContent = roomId;
+    const manualRetryBtn = document.getElementById('manualRetryBtn');
+    const placeholderRetryBtn = document.getElementById('placeholderRetryBtn');
+    const placeholderStatusTitle = document.getElementById('placeholderStatusTitle');
+    const placeholderStatusDesc = document.getElementById('placeholderStatusDesc');
+
+    function setStandbyUI(isOffline = false) {
+      connectionState = isOffline ? 'standbyOffline' : 'standby';
+      statusBadge.className = 'status-badge';
+      applyViewerLocale();
+    }
+
+    function setConnectedUI() {
+      hostOnline = true;
+      connectionState = 'connected';
+      clearTimeout(connectTimeout);
+      connectingOverlay.hidden = true;
+      statusBadge.className = 'status-badge connected';
+      if (historyRecords.length === 0 && placeholderRetryBtn) {
+        placeholderRetryBtn.style.display = 'none';
+      }
+      applyViewerLocale();
+    }
+
+    function initLobbyConnection() {
+      if (buildingLobby) buildingLobby.hidden = false;
+      if (connectingOverlay) connectingOverlay.hidden = true;
+      if (streamTextEl) streamTextEl.style.display = 'none';
+      if (audioToggleBtn) audioToggleBtn.hidden = true;
+      applyViewerLocale();
+
+      if (typeof mqtt === 'undefined') return;
+      try {
+        const lobbyClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+          clientId: `lds-lobby-${Math.random().toString(36).slice(2, 8)}`,
+          clean: true,
+          connectTimeout: 8000,
+          reconnectPeriod: 5000,
+        });
+        lobbyClient.on('connect', () => {
+          lobbyClient.subscribe('lds-interpret/room/+/presence', { qos: 0 });
+        });
+        lobbyClient.on('message', (_topic, payload) => {
+          try {
+            const msg = JSON.parse(payload.toString());
+            if (msg && msg.roomId) {
+              liveRoomsMap.set(msg.roomId, { online: Boolean(msg.online), ts: msg.ts || Date.now() });
+              renderBuildingLobby();
+            }
+          } catch {}
+        });
+      } catch {}
+    }
+
+    function initViewerConnection() {
+      if (isLobbyMode) {
+        initLobbyConnection();
+        return;
+      }
+      if (typeof mqtt === 'undefined') {
+        connectingOverlay.hidden = false;
+        connectingMessage.textContent = t('libErrorTitle');
+        document.getElementById('connectingSub').textContent = t('libErrorSub');
+        manualRetryBtn.style.display = 'inline-block';
+        manualRetryBtn.textContent = t('reloadBtn');
+        manualRetryBtn.onclick = () => window.location.reload();
+        return;
+      }
+
+      connectionState = 'connecting';
+      statusBadge.className = 'status-badge';
+      connectingOverlay.hidden = false;
+      manualRetryBtn.style.display = 'none';
+      applyViewerLocale();
+
+      // 4秒以内にホストの配信信号が来ない場合はオーバーレイを閉じ、待機画面を表示して操作可能にする
+      clearTimeout(connectTimeout);
+      connectTimeout = setTimeout(() => {
+        if (!hostOnline) {
+          connectingOverlay.hidden = true;
+          setStandbyUI(false);
+        }
+      }, 4000);
+
+      try {
+        if (mqttClient) {
+          try { mqttClient.end(true); } catch {}
+        }
+
+        mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+          clientId: viewerClientId,
+          clean: true,
+          connectTimeout: 8000,
+          reconnectPeriod: 3000,
+          keepalive: 25,
+          timerVariant: 'native',
+        });
+
+        mqttClient.on('connect', () => {
+          mqttClient.subscribe([streamTopic, presenceTopic], { qos: 0 });
+          mqttClient.publish(ctrlTopic, JSON.stringify({ type: 'hello', clientId: viewerClientId, lang: currentLang, audioEnabled }));
+
+          clearInterval(pingTimer);
+          pingTimer = setInterval(() => {
+            if (mqttClient && mqttClient.connected) {
+              mqttClient.publish(ctrlTopic, JSON.stringify({ type: 'ping', clientId: viewerClientId, lang: currentLang, audioEnabled }));
+            }
+          }, 20000);
+        });
+
+        mqttClient.on('message', (topic, payload) => {
+          try {
+            const msg = JSON.parse(payload.toString());
+            if (!msg) return;
+
+            if (topic === presenceTopic) {
+              if (msg.buildingName || msg.roomName) {
+                dynamicLocationMeta = msg;
+                updateLocationBadge();
+              }
+              if (msg.online) {
+                setConnectedUI();
+                mqttClient.publish(ctrlTopic, JSON.stringify({ type: 'hello', clientId: viewerClientId, lang: currentLang, audioEnabled }));
+              } else {
+                hostOnline = false;
+                setStandbyUI(true);
+                if (placeholderRetryBtn) placeholderRetryBtn.style.display = 'inline-block';
+              }
+              return;
+            }
+
+            if (topic === streamTopic) {
+              if (!hostOnline) setConnectedUI();
+              if (!msg.type) return;
+
+              if (msg.type === 'history') {
+                if (msg.targetClient && msg.targetClient !== viewerClientId) return;
+                historyRecords = Array.isArray(msg.payload) ? msg.payload : [];
+                renderCurrentLangStream();
+              } else if (msg.type === 'new_segment') {
+                historyRecords.push(msg.payload);
+                streamPlaceholder.style.display = 'none';
+                streamInterim.textContent = '';
+
+                const text =
+                  msg.payload.translations?.[currentLang] ||
+                  (currentLang === 'ja' ? msg.payload.sourceText || msg.payload.ja : msg.payload.translations?.en || msg.payload.en || '');
+
+                if (text) {
+                  const span = document.createElement('span');
+                  span.className = 'chunk-new';
+                  span.textContent = text + (currentLang === 'ja' ? '' : ' ');
+                  streamCommitted.appendChild(span);
+                  scrollToBottom();
+                }
+              } else if (msg.type === 'streaming') {
+                if (msg.payload?.lang === currentLang) {
+                  streamPlaceholder.style.display = 'none';
+                  streamInterim.textContent = msg.payload.text || '';
+                  scrollToBottom();
+                }
+              } else if (msg.type === 'paragraph_break') {
+                streamCommitted.appendChild(document.createTextNode('\n\n'));
+                historyRecords.push({ isParagraphBreak: true });
+                scrollToBottom();
+              } else if (msg.type === 'tts_audio') {
+                if (audioEnabled && msg.payload?.lang === currentLang && msg.payload?.data) {
+                  audioQueue.push({
+                    id: msg.payload.id,
+                    data: msg.payload.data,
+                    mimeType: msg.payload.mimeType || 'audio/wav',
+                  });
+                  processAudioQueue();
+                }
+              } else if (msg.type === 'clear') {
+                historyRecords = [];
+                renderCurrentLangStream();
+                if (audioEnabled) {
+                  stopAndClearAudioQueue();
+                }
+              }
+            }
+          } catch {}
+        });
+
+        mqttClient.on('reconnect', () => {
+          if (!hostOnline) {
+            connectionState = 'reconnecting';
+            statusBadge.className = 'status-badge';
+            applyViewerLocale();
+          }
+        });
+
+        mqttClient.on('error', (err) => {
+          console.warn('Viewer MQTT error:', err?.message || err);
+        });
+
+        window.addEventListener('beforeunload', () => {
+          if (mqttClient && mqttClient.connected) {
+            try {
+              mqttClient.publish(ctrlTopic, JSON.stringify({ type: 'bye', clientId: viewerClientId }));
+              mqttClient.end(true);
+            } catch {}
+          }
+        });
+      } catch (err) {
+        console.error('Failed to init MQTT viewer:', err);
+      }
+    }
+
+    manualRetryBtn?.addEventListener('click', () => {
+      manualRetryBtn.textContent = t('retryingBtn');
+      if (mqttClient && mqttClient.connected) {
+        mqttClient.publish(ctrlTopic, JSON.stringify({ type: 'hello', clientId: viewerClientId, lang: currentLang, audioEnabled }));
+      } else {
+        initViewerConnection();
+      }
+      setTimeout(() => { manualRetryBtn.textContent = t('retryBtn'); }, 2000);
+    });
+
+    placeholderRetryBtn?.addEventListener('click', () => {
+      placeholderRetryBtn.textContent = t('retryingBtn');
+      if (mqttClient && mqttClient.connected) {
+        mqttClient.publish(ctrlTopic, JSON.stringify({ type: 'hello', clientId: viewerClientId, lang: currentLang, audioEnabled }));
+      } else {
+        initViewerConnection();
+      }
+      setTimeout(() => { placeholderRetryBtn.textContent = t('retryBtn'); }, 2000);
+    });
+
+    applyViewerLocale();
+    initViewerConnection();
+  </script>
+</body>
+</html>
