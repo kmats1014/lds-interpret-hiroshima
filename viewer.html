@@ -614,7 +614,7 @@
     const urlParams = new URLSearchParams(window.location.search);
     const rawRoomParam = urlParams.get('room');
     const isLobbyMode = !rawRoomParam;
-    const roomId = rawRoomParam || 'hiroshima-hakushima-chapel';
+    const roomId = rawRoomParam || 'hiroshima-hikari-chapel';
     let currentLang = UI_STRINGS[urlParams.get('lang')] ? urlParams.get('lang') : 'en';
     let connectionState = isLobbyMode ? 'lobby' : 'connecting'; // 'lobby' | 'connecting' | 'reconnecting' | 'standby' | 'standbyOffline' | 'connected'
     let dynamicLocationMeta = null;

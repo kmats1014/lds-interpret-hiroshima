@@ -327,9 +327,9 @@ class GraceInterpretApp {
       sourceLang: 'ja',
       targetLang: 'en',
       targetLangs: ['en'],
-      buildingId: 'hakushima',
+      buildingId: 'hikari',
       roomSlotId: 'chapel',
-      roomId: buildHiroshimaRoomId('hakushima', 'chapel'),
+      roomId: buildHiroshimaRoomId('hikari', 'chapel'),
       churchName: '',
       autoCommitLength: 42,
       fontScale: 1.15,
@@ -349,7 +349,7 @@ class GraceInterpretApp {
           merged.targetLangs = merged.targetLang ? [merged.targetLang] : ['en'];
         }
         merged.targetLangs = merged.targetLangs.slice(0, 3);
-        if (!merged.buildingId) merged.buildingId = 'hakushima';
+        if (!merged.buildingId) merged.buildingId = 'hikari';
         if (!merged.roomSlotId) merged.roomSlotId = 'chapel';
         if (!merged.roomId || /^lds-[a-z0-9]+$/i.test(merged.roomId)) {
           merged.roomId = buildHiroshimaRoomId(merged.buildingId, merged.roomSlotId);
@@ -366,7 +366,7 @@ class GraceInterpretApp {
         };
       }
     } catch {}
-    defaults.roomId = buildHiroshimaRoomId('hakushima', 'chapel');
+    defaults.roomId = buildHiroshimaRoomId('hikari', 'chapel');
     return defaults;
   }
 
@@ -725,7 +725,7 @@ class GraceInterpretApp {
       this.setCustomRoomId(newRoomId);
     });
     this.roomSelect?.addEventListener('change', () => {
-      const buildingId = this.buildingSelect?.value || this.settings.buildingId || 'hakushima';
+      const buildingId = this.buildingSelect?.value || this.settings.buildingId || 'hikari';
       const roomSlotId = this.roomSelect.value || 'chapel';
       this.settings.buildingId = buildingId;
       this.settings.roomSlotId = roomSlotId;
@@ -2528,7 +2528,7 @@ class GraceInterpretApp {
     }
 
     const matched = findBuildingAndRoom(this.settings.roomId);
-    const buildingId = matched?.building?.id || this.settings.buildingId || 'hakushima';
+    const buildingId = matched?.building?.id || this.settings.buildingId || 'hikari';
     const roomSlotId = matched?.room?.id || this.settings.roomSlotId || 'chapel';
     this.settings.buildingId = buildingId;
     this.settings.roomSlotId = roomSlotId;

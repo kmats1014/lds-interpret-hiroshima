@@ -1,73 +1,63 @@
 /**
- * 広島県内 教会（建物）・部屋 定義モジュール
+ * 広島ステーク・関連エリア 教会（建物）・部屋 定義モジュール
  * ホスト側 (app.js) と参加者側 (viewer.html) の両方で共通利用し、
  * 固定ルームID (hiroshima-{buildingId}-{roomId}) による混線防止と常設QRコード運用を実現します。
  */
 
+const STANDARD_ROOMS = [
+  { id: 'chapel', nameJa: '礼拝堂', nameEn: 'Chapel' },
+  { id: 'rs', nameJa: '扶助協会室', nameEn: 'Relief Society Room' },
+  { id: 'primary', nameJa: 'プライマリー室', nameEn: 'Primary Room' },
+  { id: 'classroom', nameJa: '教室・その他', nameEn: 'Classroom' },
+];
+
 export const HIROSHIMA_BUILDINGS = [
   {
-    id: 'hakushima',
-    nameJa: '広島（白島）',
-    nameEn: 'Hiroshima (Hakushima)',
-    rooms: [
-      { id: 'chapel', nameJa: '礼拝堂', nameEn: 'Chapel' },
-      { id: 'rs', nameJa: '扶助協会室', nameEn: 'Relief Society Room' },
-      { id: 'primary', nameJa: 'プライマリー室', nameEn: 'Primary Room' },
-      { id: 'classroom', nameJa: '教室・その他', nameEn: 'Classroom' },
-    ],
+    id: 'hikari',
+    nameJa: '広島光',
+    nameEn: 'Hiroshima Hikari',
+    rooms: STANDARD_ROOMS,
   },
   {
-    id: 'fukuyama',
-    nameJa: '福山',
-    nameEn: 'Fukuyama',
-    rooms: [
-      { id: 'chapel', nameJa: '礼拝堂', nameEn: 'Chapel' },
-      { id: 'rs', nameJa: '扶助協会室', nameEn: 'Relief Society Room' },
-      { id: 'classroom', nameJa: '教室・その他', nameEn: 'Classroom' },
-    ],
+    id: 'takasu',
+    nameJa: '高須',
+    nameEn: 'Takasu',
+    rooms: STANDARD_ROOMS,
   },
   {
-    id: 'kure',
-    nameJa: '呉',
-    nameEn: 'Kure',
-    rooms: [
-      { id: 'chapel', nameJa: '礼拝堂', nameEn: 'Chapel' },
-      { id: 'rs', nameJa: '扶助協会室', nameEn: 'Relief Society Room' },
-      { id: 'classroom', nameJa: '教室・その他', nameEn: 'Classroom' },
-    ],
+    id: 'hatsukaichi',
+    nameJa: '廿日市',
+    nameEn: 'Hatsukaichi',
+    rooms: STANDARD_ROOMS,
   },
   {
-    id: 'higashihiroshima',
-    nameJa: '東広島',
-    nameEn: 'Higashihiroshima',
-    rooms: [
-      { id: 'chapel', nameJa: '礼拝堂', nameEn: 'Chapel' },
-      { id: 'rs', nameJa: '扶助協会室', nameEn: 'Relief Society Room' },
-      { id: 'classroom', nameJa: '教室・その他', nameEn: 'Classroom' },
-    ],
+    id: 'yanai',
+    nameJa: '柳井',
+    nameEn: 'Yanai',
+    rooms: STANDARD_ROOMS,
   },
   {
-    id: 'onomichi',
-    nameJa: '尾道',
-    nameEn: 'Onomichi',
-    rooms: [
-      { id: 'chapel', nameJa: '礼拝堂', nameEn: 'Chapel' },
-      { id: 'classroom', nameJa: '教室・その他', nameEn: 'Classroom' },
-    ],
+    id: 'tokuyama',
+    nameJa: '徳山',
+    nameEn: 'Tokuyama',
+    rooms: STANDARD_ROOMS,
   },
   {
-    id: 'miyoshi',
-    nameJa: '三次',
-    nameEn: 'Miyoshi',
-    rooms: [
-      { id: 'chapel', nameJa: '礼拝堂', nameEn: 'Chapel' },
-      { id: 'classroom', nameJa: '教室・その他', nameEn: 'Classroom' },
-    ],
+    id: 'saijo',
+    nameJa: '西条',
+    nameEn: '西条 / Saijo'.replace('西条 / ', ''),
+    rooms: STANDARD_ROOMS,
+  },
+  {
+    id: 'hamada',
+    nameJa: '浜田',
+    nameEn: 'Hamada',
+    rooms: STANDARD_ROOMS,
   },
 ];
 
 export function buildHiroshimaRoomId(buildingId, roomId) {
-  const b = (buildingId || 'hakushima').replace(/[^a-zA-Z0-9_-]/g, '');
+  const b = (buildingId || 'hikari').replace(/[^a-zA-Z0-9_-]/g, '');
   const r = (roomId || 'chapel').replace(/[^a-zA-Z0-9_-]/g, '');
   return `hiroshima-${b}-${r}`;
 }
