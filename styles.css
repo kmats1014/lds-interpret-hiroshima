@@ -248,6 +248,10 @@ body {
   border: 1px solid var(--border-subtle);
 }
 
+.control-group[hidden] {
+  display: none !important;
+}
+
 .control-label {
   font-size: 0.74rem;
   color: var(--text-muted);
